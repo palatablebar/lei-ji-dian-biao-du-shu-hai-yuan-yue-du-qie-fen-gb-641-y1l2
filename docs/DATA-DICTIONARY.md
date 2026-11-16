@@ -82,3 +82,41 @@
 标记 `K_*`：`K_ROLLOVER`、`K_REPLACEMENT_FIRST`、`K_ESTIMATE_SKIPPED`、`K_CHARSET_FALLBACK`、`K_BOM_STRIPPED`、`K_SEGMENT_SPLIT`、`K_TRUNCATED_TAIL`、`K_TOU_ADJUSTED`、`K_BILL_ROUNDED`、`K_UNIT_ASSUMED`、`K_UNIT_CONVERTED`、`K_DUPLICATE_IDENTICAL`。
 
 唯一来源：`app/reasons.py`；页面与导出的原因文案都从它取。
+
+## 10 力率调整（M8）字段与口径
+
+### 10.1 无功抄表包
+
+- 复用同一套列契约与文本归一口径；`register` 只接受无功寄存器（`无功`/`REACTIVE`/`无功总`/`无功电量`/`kvarh` 等，映射见 `config.REACTIVE_REGISTER_ALIASES`）。
+- 单位归一到 kvarh（`config.UNIT_TO_KVARH`）；单位列留空或写 kWh/度 按 1 处理，量纲以寄存器为准。
+- 抄表包指纹 = 原始字节 sha256；`package_id = "pf-" + sha256(有功批次ID, 指纹)[:16]`，同包重跑幂等。
+- 原始字节落证目录：`var/pf_evidence/<package_id>/<filename>`，只写不覆盖（内容冲突报 `E_PF_EVIDENCE_CONFLICT`）。
+
+### 10.2 力率账单（pf_bills）关键字段
+
+| 字段 | 含义 |
+|---|---|
+| `evidence_grade` | `OBSERVED` 实测 / `LOW_COVERAGE` 覆盖不足兜底 / `NO_EVIDENCE` 无证据兜底 |
+| `status` | `FINAL` 定案 / `PROVISIONAL` 暂估（待追补）；旧版被取代记 `SUPERSEDED`（保留不删） |
+| `pf_basis` | `observed` 采用窗口实测力率 / `contract` 采用合同兜底力率 |
+| `coverage` | 无功覆盖天数 / 当月自然天数，4 位小数；门槛 `PF_MIN_COVERAGE=0.60` |
+| `window_start/end` | 无功观察窗口起止（UTC），复核据此看采用的观察范围 |
+| `active_kwh` / `window_active_kwh` | 整月有功 / 观察窗口内有功；实测 cosφ 只用后者配窗口无功 |
+| `reactive_kvarh` | 观察窗口内无功电量；无证据为 NULL |
+| `observed_pf` / `applied_pf` | 窗口实测 cosφ（保留 2 位）/ 实际用于查表的 cosφ |
+| `adjust_rate_pct` | 国标分档调整率（%），来自 `m8_powerfactor/table.py` |
+| `adjustment_yuan` / `total_yuan` | 力率调整电费（0.01 元）/ 基础电费+调整后合计 |
+| `true_up_of` / `prior_adjustment_yuan` / `true_up_delta_yuan` | 追补引用的原暂估账单、原调整额、本次差额 |
+
+### 10.3 计算口径
+
+- `cosφ = P / √(P² + Q²)`，P、Q 同取观察窗口；结果量化到 0.01（`PF_QUANT`），半进位后查分档表。
+- `力率调整电费 = 基础电费 × 调整率%`，四舍五入到 0.01 元；基础电费取自已落库的有功批次账单，M8 不重算 M1–M7。
+- 月桶、按日权重、半开区间与 M4/M5 完全同构（复用 `weights` 模块）。
+- 发布产物目录 `var/pf_releases/<package_id>-v<seq>/`，四份文件同版本；`current` 为生效版本软链。
+
+### 10.4 M8 原因码
+
+文件级：`E_PF_PACKAGE_EMPTY`、`E_PF_HEADER_INVALID`、`E_PF_NO_BILLS`、`E_PF_STANDARD_UNSUPPORTED`、`E_PF_RELEASE_TARGET`、`E_PF_EVIDENCE_CONFLICT`。
+行级：`Q_PF_BAD_READING`、`Q_PF_BAD_TIME`、`Q_PF_UNKNOWN_METER`、`Q_PF_BAD_REGISTER`、`Q_PF_REVERSE_READING`、`Q_PF_DUPLICATE_CONFLICT`。
+标记：`K_PF_OBSERVED`、`K_PF_LOW_COVERAGE`、`K_PF_NO_EVIDENCE`、`K_PF_PROVISIONAL`、`K_PF_FINAL`、`K_PF_TRUE_UP`、`K_PF_REPLAY`。

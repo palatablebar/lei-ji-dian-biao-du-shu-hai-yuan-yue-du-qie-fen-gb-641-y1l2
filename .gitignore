@@ -29,3 +29,6 @@ target/
 *.o
 *.obj
 .DS_Store
+
+# meterback 运行期产物：SQLite、M8 原始证据 WORM 与发布版本
+var/

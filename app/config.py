@@ -29,6 +29,35 @@ REGISTERS = ("TOTAL", "PEAK", "FLAT", "VALLEY")
 REGISTER_LABELS = {"TOTAL": "总", "PEAK": "峰", "FLAT": "平", "VALLEY": "谷"}
 TOU_REGISTERS = ("PEAK", "FLAT", "VALLEY")
 
+# M8 无功寄存器：只进力率子系统，不进 M1–M7 的有功流水线。
+# REACTIVE 是无功电能总（ kvarh ）；M1–M7 仍把它当未知寄存器隔离，互不影响。
+REACTIVE_REGISTERS = ("REACTIVE",)
+REACTIVE_REGISTER_LABELS = {"REACTIVE": "无功"}
+# 无功抄表里常见的寄存器写法 → 规范寄存器
+REACTIVE_REGISTER_ALIASES = {
+    "reactive": "REACTIVE", "无功": "REACTIVE", "无功总": "REACTIVE",
+    "无功电量": "REACTIVE", "kvarh": "REACTIVE", "rq": "REACTIVE",
+}
+# 无功计量单位 → kvarh 换算（有功表上的度/kWh 写法也按 1 处理，量纲以契约寄存器为准）
+UNIT_TO_KVARH = {
+    "kvarh": Decimal("1"), "千乏时": Decimal("1"), "乏时": Decimal("0.001"),
+    "mvarh": Decimal("1000"), "兆乏时": Decimal("1000"),
+}
+# 力率调整电费（M8）规则参数
+PF_RULE_NAME = "power-factor-adjust/1.0.0"
+# 观察窗口覆盖率（按天，无功已覆盖天数 / 当月自然天数）达到该比例才允许用实测力率
+PF_MIN_COVERAGE = Decimal("0.60")
+# 覆盖率不足或完全没有无功证据时的合同兜底力率（对应国标 0.90 考核档）
+PF_CONTRACT_FALLBACK = Decimal("0.90")
+# 力率查表前的量化刻度（cosφ 保留两位，按国标分档表就近取档）
+PF_QUANT = Decimal("0.01")
+# 支持的考核标准力率档位（国标三档）
+PF_STANDARDS = (Decimal("0.90"), Decimal("0.85"), Decimal("0.80"))
+REACTIVE_FILE = "reactive_dirty.csv"
+REACTIVE_FINAL_FILE = "reactive_final.csv"
+PF_EVIDENCE_DIRNAME = "pf_evidence"
+PF_RELEASE_DIRNAME = "pf_releases"
+
 # 单位 → kWh 换算系数（读数先归一到契约单位，用量再折 kWh）
 UNIT_TO_KWH = {
     "kwh": Decimal("1"), "度": Decimal("1"), "千瓦时": Decimal("1"),
@@ -46,7 +75,8 @@ READ_TYPE_ALIASES = {
     "e": "E", "估抄": "E", "估算": "E",
 }
 
-STAGES = ("ingest", "contract", "quality", "restore", "allocate", "reconcile", "export")
+STAGES = ("ingest", "contract", "quality", "restore", "allocate", "reconcile", "export",
+          "pf_adjust")
 STAGE_LABELS = {
     "ingest": "采信",
     "contract": "契约",
@@ -55,6 +85,7 @@ STAGE_LABELS = {
     "allocate": "切分",
     "reconcile": "对账",
     "export": "导出",
+    "pf_adjust": "力率调整",
 }
 STAGE_FLOW = "采信 → 契约 → 质量 → 还原 → 切分 → 对账 → 导出"
 
@@ -80,6 +111,8 @@ SAMPLES = {
     "readings_header_only.csv": "仅表头",
     "readings_blank.csv": "全空行",
     "readings_bad_header.csv": "表头缺列",
+    REACTIVE_FILE: "无功抄表包 · 缺证月份（暂估）",
+    REACTIVE_FINAL_FILE: "无功抄表包 · 补齐定案（追补）",
 }
 DEFAULT_SAMPLE = "readings_dirty.csv"
 METERS_FILE = "meters.csv"

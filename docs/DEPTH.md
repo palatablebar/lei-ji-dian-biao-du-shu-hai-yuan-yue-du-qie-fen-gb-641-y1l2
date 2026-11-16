@@ -1,6 +1,6 @@
 # 深度登记 meterback（累计电表读数还原与月度切分）
 
-- 规模：中型（7 个功能模块 / 6 个应用页 / 77 条测试）
+- 规模：中型（8 个功能模块 / 7 个应用页 / 111 条测试）
 - 核心规则：**区间还原 + 按日权重月度切分**。读数按 `(表号, 寄存器, UTC 时间)` 排序后逐对还原：区间用量 =（本次 − 上次）× 综合倍率，满量容量翻转时补容量，换表处拆成「旧表末段 + 新表首读起算」两段，估抄行不作锚点但给区间打标记；区间用量按覆盖天数切到自然月（`[月初, 下月初)` 半开），余数用最大余额法分到 0.001 kWh，同月「总表 = 峰 + 平 + 谷」的残差并入最大分量。
 - 使用者与工作流：临江供电所抄表班 4 人、辖区 8 只示例表（实际 320 只），月度线损与电费原先靠 Excel 手拉；现在一次处理得到「区间用量 + 月度分摊 + 电费」，每个数字都能追回原始行号与原因码。
 
@@ -15,6 +15,7 @@
 | M5 月度切分 | 重算分摊与账单，看每月合计与尾差 | POST /api/months/allocate、页面 /months | `app/modules/m5_months/allocate.py` `app/modules/m5_months/weights.py` `app/modules/m5_months/tou.py` | `tests/test_m5_months.py` |
 | M6 批次与对账 | 跑全流程、查批次历史、看四账、失败重试 | POST /api/runs、GET /api/batches、GET /api/reconcile、页面 / 与 /batches | `app/modules/m6_batches/service.py` `app/modules/m6_batches/compare.py` `app/modules/m6_batches/history.py` `app/modules/m6_batches/resume.py` | `tests/test_m6_batches.py` |
 | M7 导出 | 导出月度分摊、区间、隔离、读数证据、运行清单 | GET /api/export/monthly.csv、GET /api/export/manifest.json、页面 /export | `app/modules/m7_export/evidence.py` `app/modules/m7_export/csv_out.py` `app/modules/m7_export/manifest_out.py` | `tests/test_m7_export.py` |
+| M8 力率调整 | 导入无功抄表包，按观察窗口算实测/兜底力率，出暂估或定案调整电费，补齐后追补，原子发布 | POST /api/powerfactor/evaluate、/finalize、/publish、页面 /powerfactor | `app/modules/m8_powerfactor/service.py` `app/modules/m8_powerfactor/billing.py` `app/modules/m8_powerfactor/evidence.py` `app/modules/m8_powerfactor/intervals.py` `app/modules/m8_powerfactor/release.py` `app/modules/m8_powerfactor/table.py` | `tests/test_m8_powerfactor.py` |
 
 端到端：`tests/test_e2e.py`（脏样例 → 六页 200 → 四账 → 导出，含 4xx 失败输入与幂等重跑）。
 不变量：`tests/test_invariants.py`（区间账 = 月度账、幂等重跑行数不变、月桶划分、账单闭合、读数分区）。
@@ -38,6 +39,9 @@
 | TRAP-18 | 0 字节文件、只有表头、数据行全是空行 | 三种都返回「成功导入 0 行」，或直接除零 | 三个文件级原因码分开返回，不落半批数据 | `app/modules/m1_ingest/service.py` | `tests/test_m1_ingest.py::test_empty_states_return_distinct_codes` |
 | TRAP-23 | 区间止点与下一段起点都算一次 | 相邻区间重复计入一天，月度用量偏高 | 区间与月桶都声明左闭右开 `[起, 止)`，相邻段首尾相接 | `app/modules/m5_months/weights.py`、`app/modules/m4_intervals/restore.py` | `tests/test_m5_months.py::test_month_slices_are_half_open`、`tests/test_m4_intervals.py::test_intervals_are_half_open_and_contiguous` |
 | TRAP-24 | 各月/各分量各自四舍五入后合计不等 | 分完差 0.001~0.02，账永远差几分 | 最大余额法分月；分量残差并入最大分量；账单先合计再舍入，分项补差 | `app/modules/m5_months/weights.py`、`app/modules/m5_months/tou.py` | `tests/test_m5_months.py::test_largest_remainder_keeps_total_exact`、`tests/test_m5_months.py::test_tou_components_closed_to_total` |
+| TRAP-31 | 无功只覆盖月中一段，却拿整月有功 P 配窗口无功 Q 算力率 | 低覆盖月算出虚高 cosφ（趋近 1），考核电费偏离实际 | 实测 cosφ 的 P、Q 都在同一观察窗口内按重叠天数取（`active_within_window`），覆盖率不足直接退合同兜底 | `app/modules/m8_powerfactor/intervals.py`、`app/modules/m8_powerfactor/billing.py` | `tests/test_m8_powerfactor.py::test_observed_p_and_q_come_from_same_window`、`::test_low_coverage_falls_back_to_contract_but_keeps_observation` |
+| TRAP-32 | 月底无功没齐，统一按合同力率兜底或硬等补齐 | 前者考核电费失真，后者错过出账 | 三级证据等级（OBSERVED/LOW_COVERAGE/NO_EVIDENCE），证据不足先出 PROVISIONAL 可发布版本，补齐后 FINAL 并只对非零差额挂追补，旧版不改 | `app/modules/m8_powerfactor/billing.py`、`app/modules/m8_powerfactor/service.py` | `tests/test_m8_powerfactor.py::test_finalize_true_up_only_nonzero_provisional`、`::test_provisional_version_remains_unchanged_after_finalize` |
+| TRAP-33 | 同一无功抄表包重复运行，或发布中途崩溃 | 重复新增电费行；/ 切出半个正式版本、旧版被破坏 | 抄表包按原始字节 sha256 派生 package_id，重跑幂等回放；发布先写临时目录再 os.replace 原子切名，current 软链失败保留旧版 | `app/modules/m8_powerfactor/service.py`、`app/modules/m8_powerfactor/release.py` | `tests/test_m8_powerfactor.py::test_same_package_rerun_is_idempotent`、`::test_interrupted_publish_keeps_previous_version` |
 
 ## 对账规则
 
@@ -54,7 +58,7 @@
 
 ## 已知不覆盖
 
-- 只支持单表计的单向有功读数；双向表（正/反向分别累计）、需量寄存器、无功寄存器一律按 `Q_BAD_REGISTER` 隔离。
+- 只支持单表计的单向有功读数；双向表（正/反向分别累计）、需量寄存器不支持。无功寄存器在 M1–M7 有功流水线里仍按 `Q_BAD_REGISTER` 隔离；无功电能由独立的 M8 力率调整子系统（`app/modules/m8_powerfactor/`）单独采信与计算，两套数据互不影响。
 - 电价固定读 `sample_data/prices.csv`（峰 1.05 / 平 0.65 / 谷 0.32 元每 kWh），没有分时日历、阶梯电价与容量电费。
 - 换表链只支持一段（旧表 → 新表）；链式多次换表能识别但只在最后一段起算，中间段会缺口。
 - 时区按固定 +08:00 处理，不引入 DST；跨时区台区不支持。

@@ -1,0 +1,145 @@
+{% extends "base.html" %}
+{% block body %}
+<section class="page-head">
+  <div>
+    <h1 class="page-title">力率调整电费（缺证月份裁决）</h1>
+    <p class="page-meta mono">
+      覆盖门槛 {{ min_coverage }} · 合同兜底力率 {{ contract_pf }} · 规则 {{ rule_version }}
+    </p>
+  </div>
+</section>
+
+<div class="notice" id="pf-notice" role="status" hidden></div>
+
+{% if not packages %}
+<section class="empty">
+  <p class="empty-line">还没有无功抄表包。对某个有功批次 POST <code>/api/powerfactor/evaluate</code> 生成暂估力率电费。</p>
+</section>
+{% else %}
+<section class="panel">
+  <div class="panel-head">
+    <h2 class="panel-title">无功抄表包（按原始字节指纹去重）</h2>
+    <span class="panel-sub mono">{{ packages|length }} 个</span>
+  </div>
+  <table class="table">
+    <thead><tr><th>package_id</th><th>文件</th><th class="num">数据行</th>
+      <th class="num">隔离</th><th>sha256（前 16 位）</th><th>创建时间</th></tr></thead>
+    <tbody>
+      {% for p in packages %}
+      <tr>
+        <td class="mono"><a class="link" href="/powerfactor?package_id={{ p.package_id }}">{{ p.package_id }}</a></td>
+        <td>{{ p.filename }}</td>
+        <td class="num mono">{{ p.data_lines }}</td>
+        <td class="num mono">{{ p.quarantine_count }}</td>
+        <td class="mono">{{ p.sha256[:16] }}</td>
+        <td class="mono">{{ p.created_at|localdt }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+{% if selected %}
+<section class="panel">
+  <div class="panel-head">
+    <h2 class="panel-title">月度力率调整电费 · {{ selected.package_id }}</h2>
+    <span class="panel-sub mono">{{ bills|length }} 笔</span>
+  </div>
+  <table class="table">
+    <thead><tr>
+      <th>月份</th><th>表号</th><th>证据</th><th>状态</th>
+      <th class="num">覆盖率</th><th>观察窗口（起 → 止 UTC）</th>
+      <th class="num">窗口P kWh</th><th class="num">窗口Q kvarh</th>
+      <th class="num">实测cosφ</th><th class="num">采用cosφ</th><th>依据</th>
+      <th class="num">调整率%</th><th class="num">调整电费元</th>
+      <th class="num">追补差额元</th><th>标记</th>
+    </tr></thead>
+    <tbody>
+      {% for b in bills %}
+      <tr>
+        <td class="mono">{{ b.month }}</td>
+        <td class="mono">{{ b.meter_id }}</td>
+        <td>{{ grade_labels.get(b.evidence_grade, b.evidence_grade) }}</td>
+        <td>{% if b.status == 'FINAL' %}<span>定案</span>{% else %}<span>暂估</span>{% endif %}</td>
+        <td class="num mono">{{ b.coverage|dec(4) }}</td>
+        <td class="mono" style="white-space:nowrap">{{ (b.window_start or '—')|localdt }} → {{ (b.window_end or '—')|localdt }}</td>
+        <td class="num mono">{{ b.window_active_kwh|kwh if b.window_active_kwh is not none else '—' }}</td>
+        <td class="num mono">{{ b.reactive_kvarh|kwh if b.reactive_kvarh is not none else '—' }}</td>
+        <td class="num mono">{{ b.observed_pf or '—' }}</td>
+        <td class="num mono"><strong>{{ b.applied_pf }}</strong></td>
+        <td>{{ '实测' if b.pf_basis == 'observed' else '合同兜底' }}</td>
+        <td class="num mono">{{ b.adjust_rate_pct }}</td>
+        <td class="num mono">{{ b.adjustment_yuan|yuan }}</td>
+        <td class="num mono">{{ b.true_up_delta_yuan|yuan if b.true_up_delta_yuan is not none else '—' }}</td>
+        <td class="mono" style="font-size:12px">{% for m in b.marks %}{{ m|code }}{% if not loop.last %}、{% endif %}{% endfor %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <p class="panel-sub" style="padding:8px 16px">
+    仍需追补：状态为「暂估」的月份待无功读数补齐后，经 <code>/api/powerfactor/finalize</code> 出定案并挂差额；旧暂估版本保留不改写。
+  </p>
+</section>
+
+<section class="panel">
+  <div class="panel-head">
+    <h2 class="panel-title">发布版本（正式结果 / 导出 / 对账同版本）</h2>
+    <span class="panel-sub mono">{{ releases|length }} 版</span>
+  </div>
+  {% if releases %}
+  <table class="table">
+    <thead><tr><th>release_id</th><th class="num">版本号</th><th>状态</th>
+      <th class="num">账单</th><th class="num">暂估</th><th class="num">定案</th>
+      <th class="num">调整合计元</th><th>导出</th></tr></thead>
+    <tbody>
+      {% for r in releases %}
+      <tr>
+        <td class="mono">{{ r.release_id }}</td>
+        <td class="num mono">v{{ r.version_seq }}</td>
+        <td>{{ r.status }}</td>
+        <td class="num mono">{{ r.bill_count }}</td>
+        <td class="num mono">{{ r.provisional_count }}</td>
+        <td class="num mono">{{ r.final_count }}</td>
+        <td class="num mono">{{ r.adjustment_total|yuan }}</td>
+        <td class="mono" style="white-space:nowrap">
+          <a class="link" href="/api/powerfactor/releases/{{ r.release_id }}/pf_bills.csv">账单CSV</a> ·
+          <a class="link" href="/api/powerfactor/releases/{{ r.release_id }}/pf_windows.csv">窗口CSV</a> ·
+          <a class="link" href="/api/powerfactor/releases/{{ r.release_id }}/pf_reconcile.json">对账JSON</a> ·
+          <a class="link" href="/api/powerfactor/releases/{{ r.release_id }}/pf_manifest.json">清单JSON</a>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="panel-sub" style="padding:8px 16px">尚未发布。POST <code>/api/powerfactor/publish</code> 原子落盘，中断保留旧版。</p>
+  {% endif %}
+</section>
+
+{% if quarantine %}
+<section class="panel">
+  <div class="panel-head">
+    <h2 class="panel-title">无功隔离区（原始证据不丢，坏行可追回行号）</h2>
+    <span class="panel-sub mono">{{ quarantine|length }} 行</span>
+  </div>
+  <table class="table">
+    <thead><tr><th class="num">行号</th><th>原因码</th><th>等级</th><th>表号</th>
+      <th>原始值</th><th>说明</th></tr></thead>
+    <tbody>
+      {% for q in quarantine %}
+      <tr>
+        <td class="num mono">{{ q.lineno }}</td>
+        <td class="mono">{{ q.code }}</td>
+        <td>{{ q.level }}</td>
+        <td class="mono">{{ q.meter_id or '—' }}</td>
+        <td class="mono">{{ q.raw_value or '—' }}</td>
+        <td>{{ q.detail }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endif %}
+{% endif %}
+{% endif %}
+{% endblock %}

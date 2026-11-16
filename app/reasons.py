@@ -42,6 +42,26 @@ REASONS: dict[str, dict[str, str]] = {
     "K_UNIT_ASSUMED": {"label": "单位按契约补齐", "level": "info"},
     "K_UNIT_CONVERTED": {"label": "单位已折算", "level": "info"},
     "K_DUPLICATE_IDENTICAL": {"label": "重复行已合并", "level": "info"},
+    # ---- M8 力率调整 ----
+    "E_PF_PACKAGE_EMPTY": {"label": "无功抄表包为空", "level": "error"},
+    "E_PF_HEADER_INVALID": {"label": "无功包表头缺列", "level": "error"},
+    "E_PF_NO_BILLS": {"label": "批次没有可考核的月度账单", "level": "error"},
+    "E_PF_STANDARD_UNSUPPORTED": {"label": "考核力率档位不支持", "level": "error"},
+    "E_PF_RELEASE_TARGET": {"label": "发布目标版本不存在", "level": "error"},
+    "E_PF_EVIDENCE_CONFLICT": {"label": "同名原始证据内容冲突拒绝覆盖", "level": "error"},
+    "Q_PF_BAD_READING": {"label": "无功读数无法解析", "level": "error"},
+    "Q_PF_BAD_TIME": {"label": "无功抄表时间无法解析", "level": "error"},
+    "Q_PF_UNKNOWN_METER": {"label": "无功表号不在契约", "level": "error"},
+    "Q_PF_BAD_REGISTER": {"label": "无功寄存器无法识别", "level": "error"},
+    "Q_PF_REVERSE_READING": {"label": "无功读数倒走", "level": "error"},
+    "Q_PF_DUPLICATE_CONFLICT": {"label": "无功同键读数不一致", "level": "error"},
+    "K_PF_OBSERVED": {"label": "按无功实测力率出账（观察窗口内）", "level": "info"},
+    "K_PF_LOW_COVERAGE": {"label": "无功覆盖不足按合同力率兜底", "level": "warn"},
+    "K_PF_NO_EVIDENCE": {"label": "当月无无功证据按合同力率兜底", "level": "warn"},
+    "K_PF_PROVISIONAL": {"label": "暂定力率电费待无功补齐追补", "level": "warn"},
+    "K_PF_FINAL": {"label": "无功已齐按实测定案", "level": "info"},
+    "K_PF_TRUE_UP": {"label": "追补差额关联原暂估版本", "level": "info"},
+    "K_PF_REPLAY": {"label": "同抄表包重跑命中既有结果", "level": "info"},
 }
 
 

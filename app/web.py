@@ -24,6 +24,7 @@ NAV = (
     ("/months", "月度分摊", "months"),
     ("/batches", "批次对账", "batches"),
     ("/export", "导出", "export"),
+    ("/powerfactor", "力率调整", "powerfactor"),
 )
 
 STATUS_LABELS = {

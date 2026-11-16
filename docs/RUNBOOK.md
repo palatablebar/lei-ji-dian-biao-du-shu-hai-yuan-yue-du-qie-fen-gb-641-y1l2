@@ -31,7 +31,40 @@ curl -sS http://localhost:18200/api/reconcile | python3 -m json.tool
 curl -sS -o /tmp/monthly.csv http://localhost:18200/api/export/monthly.csv
 ```
 
-## 3 常见操作
+## 3 力率调整电费（M8，缺证月份）
+
+裁决口径见 [`POWERFACTOR-ADJUDICATION.md`](POWERFACTOR-ADJUDICATION.md)。命令行流程：
+
+```bash
+# 1) 先有一个已完成的有功批次，取其 batch_id
+BID=$(curl -sS -X POST http://localhost:18200/api/runs \
+  -H 'Content-Type: application/json' -d '{"sample":"readings_dirty.csv"}' | python3 -c 'import sys,json;print(json.load(sys.stdin)["batch_id"])')
+
+# 2) 月底无功缺证：评估生成暂估/定案力率电费（同包重跑幂等，不新增电费）
+PID=$(curl -sS -X POST http://localhost:18200/api/powerfactor/evaluate \
+  -H 'Content-Type: application/json' \
+  -d "{\"batch_id\":\"$BID\",\"sample\":\"reactive_dirty.csv\"}" \
+  | python3 -c 'import sys,json;print(json.load(sys.stdin)["package_id"])')
+
+# 3) 原子发布（正式电费/窗口/对账/清单同版本；中断保留旧版）
+RID=$(curl -sS -X POST http://localhost:18200/api/powerfactor/publish \
+  -H 'Content-Type: application/json' -d "{\"package_id\":\"$PID\"}" \
+  | python3 -c 'import sys,json;print(json.load(sys.stdin)["release_id"])')
+
+# 4) 下载同版本产物
+curl -sS -o pf_bills.csv    http://localhost:18200/api/powerfactor/releases/$RID/pf_bills.csv
+curl -sS -o pf_reconcile.json http://localhost:18200/api/powerfactor/releases/$RID/pf_reconcile.json
+
+# 5) 无功补齐后定案追补（只对非零差额挂账，旧暂估版保留）
+curl -sS -X POST http://localhost:18200/api/powerfactor/finalize \
+  -H 'Content-Type: application/json' \
+  -d "{\"provisional_package_id\":\"$PID\",\"sample\":\"reactive_final.csv\"}"
+```
+
+复核在 `/powerfactor` 页：看每笔的证据等级、观察窗口起止、覆盖率、实测/采用力率、暂估或定案、追补差额，以及无功隔离区的原始行号。
+原始抄表包保存在 `var/pf_evidence/<package_id>/`，发布版本在 `var/pf_releases/`。
+
+## 4 常见操作
 
 - **同输入重跑**：再点一次「开始处理」或 POST 同一 `sample`，命中批次键，返回同一 `batch_id`，行数与合计不变。
 - **强制重算**：POST `/api/batches/{batch_id}/retry`，用同一个 `sample` 重跑并覆盖该批次的行。
@@ -39,7 +72,7 @@ curl -sS -o /tmp/monthly.csv http://localhost:18200/api/export/monthly.csv
 - **重跑测试**：`docker compose exec -T app python -m pytest -q`。
 - **清库**：`docker compose down -v` 删除命名卷；下次启动自动建表。
 
-## 4 失败排查
+## 5 失败排查
 
 | 现象 | 原因 | 处理 |
 |---|---|---|
@@ -51,17 +84,21 @@ curl -sS -o /tmp/monthly.csv http://localhost:18200/api/export/monthly.csv
 | 400 `E_SAMPLE_UNKNOWN` | 样例名不在白名单 | 用页面下拉框里的名字 |
 | 404 `E_BATCH_NOT_FOUND` | 还没有批次就导出 | 先跑一次处理 |
 | 四账「不平」 | 逻辑或数据被改 | 看差额字段与说明，逐账核对 |
+| 422 `E_PF_PACKAGE_EMPTY` | 无功抄表包为空或全部坏行 | 检查无功文件，隔离区看坏行原因码 |
+| 422 `E_PF_NO_BILLS` | 有功批次还没有月度账单就算力率 | 先把有功批次跑到 done |
+| 400 `E_PF_STANDARD_UNSUPPORTED` | 考核力率档位不是 0.90/0.85/0.80 | 用支持的三档 |
+| 409 `E_PF_EVIDENCE_CONFLICT` | 同名原始证据内容不一致 | 不要覆盖；换文件名或核对抄表包来源 |
 
 日志：`docker compose logs -f app`（uvicorn 访问日志）。运行清单里的 `input_digest` 可用来确认两次运行读的是同一份输入。
 
-## 5 复算
+## 6 复算
 
 1. 从导出页取 `monthly.csv` 与 `manifest.json`；
 2. `manifest.json` 的 `inputs[].sha256` 与样例文件比对，确认输入未变；
 3. 逐月加总 `用量kWh` 应等于 `manifest.json` 的 `counters` 与 `accounts[1]`（区间账）两侧；
 4. 账单 `金额元` 之和应等于 `accounts[3]` 两侧，分项之和等于账单额。
 
-## 6 环境变量
+## 7 环境变量
 
 | 变量 | 默认 | 说明 |
 |---|---|---|
